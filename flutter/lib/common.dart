@@ -1958,6 +1958,38 @@ Future<Size> _adjustRestoreMainWindowSize(double? width, double? height) async {
   return Size(restoreWidth, restoreHeight);
 }
 
+// GTK3 (which the Linux desktop build embeds) has no `wp-fractional-scale-v1` support, so under
+// compositors that require that protocol for fractional scaling (e.g. KWin/KDE Plasma), GDK can
+// under-report the scale it applies to the window, and the main window ends up rendered smaller
+// than the rest of a fractionally-scaled desktop. This compares the compositor's true per-output
+// scale (queried over the Wayland protocol, see `wayland_uniform_output_scale` in base/linux.rs)
+// against what GDK is actually using, and inflates the requested window size to compensate. It is
+// a safe no-op on any desktop where GDK's own scale already matches (e.g. GNOME/Mutter, X11, or
+// an integer KDE scale factor).
+Future<Size> _waylandCompensatedSize(Size size) async {
+  if (!isLinux) return size;
+  final ratio = await _waylandOutputScaleCompensationRatio();
+  if (ratio == null) return size;
+  return Size(size.width * ratio, size.height * ratio);
+}
+
+Future<double?> _waylandOutputScaleCompensationRatio() async {
+  if (!bind.mainCurrentIsWayland()) return null;
+  final trueScaleStr =
+      await bind.mainGetCommon(key: 'wayland-uniform-output-scale');
+  if (trueScaleStr.isEmpty) return null;
+  final trueScale = double.tryParse(trueScaleStr);
+  if (trueScale == null || trueScale <= 0) return null;
+  final screens = await window_size.getScreenList();
+  if (screens.isEmpty) return null;
+  final gdkScale = screens.first.scaleFactor;
+  if (gdkScale <= 0) return null;
+  final ratio = trueScale / gdkScale;
+  // Small dead-zone for xdg-output rounding noise and for desktops that already compensate
+  // correctly, so this only kicks in for a real gap.
+  return ratio > 1.03 ? ratio : null;
+}
+
 // Consider using Rect.contains() instead,
 // though the implementation is not exactly the same.
 bool isPointInRect(Offset point, Rect rect) {
@@ -2112,6 +2144,7 @@ Future<bool> restoreWindowPosition(WindowType type,
               ignoreDevicePixelRatio: _ignoreDevicePixelRatio);
         }
       }
+      final mainWindowSize = await _waylandCompensatedSize(size);
       if (lpos.isMaximized == true) {
         await restorePos();
         if (!(bind.isIncomingOnly() || bind.isOutgoingOnly())) {
@@ -2126,17 +2159,17 @@ Future<bool> restoreWindowPosition(WindowType type,
             // The window belongs to the left monitor, but if it is moved a little to the right, it will belong to the right monitor.
             // After restoring, the size will be incorrect.
             // See known issue in https://github.com/rustdesk/rustdesk/pull/9840
-            await windowManager.setSize(size,
+            await windowManager.setSize(mainWindowSize,
                 ignoreDevicePixelRatio: _ignoreDevicePixelRatio);
           }
           await restorePos();
           if (storeSize) {
-            await windowManager.setSize(size,
+            await windowManager.setSize(mainWindowSize,
                 ignoreDevicePixelRatio: _ignoreDevicePixelRatio);
           }
         } else {
           if (storeSize) {
-            await windowManager.setSize(size,
+            await windowManager.setSize(mainWindowSize,
                 ignoreDevicePixelRatio: _ignoreDevicePixelRatio);
           }
           await restorePos();
