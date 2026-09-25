@@ -1967,27 +1967,17 @@ Future<Size> _adjustRestoreMainWindowSize(double? width, double? height) async {
 // a safe no-op on any desktop where GDK's own scale already matches (e.g. GNOME/Mutter, X11, or
 // an integer KDE scale factor).
 Future<Size> _waylandCompensatedSize(Size size) async {
-  if (!isLinux) return size;
-  final ratio = await _waylandOutputScaleCompensationRatio();
-  if (ratio == null) return size;
-  return Size(size.width * ratio, size.height * ratio);
-}
-
-Future<double?> _waylandOutputScaleCompensationRatio() async {
-  if (!bind.mainCurrentIsWayland()) return null;
-  final trueScaleStr =
-      await bind.mainGetCommon(key: 'wayland-uniform-output-scale');
-  if (trueScaleStr.isEmpty) return null;
-  final trueScale = double.tryParse(trueScaleStr);
-  if (trueScale == null || trueScale <= 0) return null;
+  if (!isLinux || !bind.mainCurrentIsWayland()) return size;
+  final trueScale = double.tryParse(
+      await bind.mainGetCommon(key: 'wayland-uniform-output-scale'));
+  if (trueScale == null || trueScale <= 0) return size;
   final screens = await window_size.getScreenList();
-  if (screens.isEmpty) return null;
-  final gdkScale = screens.first.scaleFactor;
-  if (gdkScale <= 0) return null;
+  final gdkScale = screens.isEmpty ? 0.0 : screens.first.scaleFactor;
+  if (gdkScale <= 0) return size;
+  // Dead-zone for xdg-output rounding noise and desktops that already compensate correctly, so
+  // this only kicks in for a real gap.
   final ratio = trueScale / gdkScale;
-  // Small dead-zone for xdg-output rounding noise and for desktops that already compensate
-  // correctly, so this only kicks in for a real gap.
-  return ratio > 1.03 ? ratio : null;
+  return ratio > 1.03 ? Size(size.width * ratio, size.height * ratio) : size;
 }
 
 // Consider using Rect.contains() instead,
