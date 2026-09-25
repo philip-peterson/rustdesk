@@ -1958,15 +1958,15 @@ Future<Size> _adjustRestoreMainWindowSize(double? width, double? height) async {
   return Size(restoreWidth, restoreHeight);
 }
 
-// GTK3 (which the Linux desktop build embeds) has no `wp-fractional-scale-v1` support, so under
-// compositors that require that protocol for fractional scaling (e.g. KWin/KDE Plasma), GDK can
-// under-report the scale it applies to the window, and the main window ends up rendered smaller
-// than the rest of a fractionally-scaled desktop. This compares the compositor's true per-output
-// scale (queried over the Wayland protocol, see `wayland_uniform_output_scale` in base/linux.rs)
-// against what GDK is actually using, and inflates the requested window size to compensate. It is
-// a safe no-op on any desktop where GDK's own scale already matches (e.g. GNOME/Mutter, X11, or
-// an integer KDE scale factor).
-Future<Size> _waylandCompensatedSize(Size size) async {
+// GTK3 (which the Linux desktop build embeds, including the desktop_multi_window plugin's
+// sub-windows) has no `wp-fractional-scale-v1` support, so under compositors that require that
+// protocol for fractional scaling (e.g. KWin/KDE Plasma), GDK can under-report the scale it
+// applies to a window, and it ends up rendered smaller than the rest of a fractionally-scaled
+// desktop. This compares the compositor's true per-output scale (queried over the Wayland
+// protocol, see `wayland_uniform_output_scale` in base/linux.rs) against what GDK is actually
+// using, and inflates the requested window size to compensate. It is a safe no-op on any desktop
+// where GDK's own scale already matches (e.g. GNOME/Mutter, X11, or an integer KDE scale factor).
+Future<Size> waylandCompensatedSize(Size size) async {
   if (!isLinux || !bind.mainCurrentIsWayland()) return size;
   final trueScale = double.tryParse(
       await bind.mainGetCommon(key: 'wayland-uniform-output-scale'));
@@ -2134,7 +2134,7 @@ Future<bool> restoreWindowPosition(WindowType type,
               ignoreDevicePixelRatio: _ignoreDevicePixelRatio);
         }
       }
-      final mainWindowSize = await _waylandCompensatedSize(size);
+      final mainWindowSize = await waylandCompensatedSize(size);
       if (lpos.isMaximized == true) {
         await restorePos();
         if (!(bind.isIncomingOnly() || bind.isOutgoingOnly())) {
@@ -2172,8 +2172,9 @@ Future<bool> restoreWindowPosition(WindowType type,
         if (offsetLeftTop == null) {
           await wc.center();
         } else {
-          final frame = Rect.fromLTWH(
-              offsetLeftTop.dx, offsetLeftTop.dy, size.width, size.height);
+          final subWindowSize = await waylandCompensatedSize(size);
+          final frame = Rect.fromLTWH(offsetLeftTop.dx, offsetLeftTop.dy,
+              subWindowSize.width, subWindowSize.height);
           await wc.setFrame(frame);
         }
       }
@@ -3482,8 +3483,9 @@ tryMoveToScreenAndSetFullscreen(Rect? screenRect) async {
   }
   final wc = WindowController.fromWindowId(stateGlobal.windowId);
   final curFrame = await wc.getFrame();
-  final frame =
-      Rect.fromLTWH(screenRect.left + 30, screenRect.top + 30, 600, 400);
+  final size = await waylandCompensatedSize(const Size(600, 400));
+  final frame = Rect.fromLTWH(
+      screenRect.left + 30, screenRect.top + 30, size.width, size.height);
   if (stateGlobal.fullscreen.isTrue &&
       curFrame.left <= frame.left &&
       curFrame.top <= frame.top &&
