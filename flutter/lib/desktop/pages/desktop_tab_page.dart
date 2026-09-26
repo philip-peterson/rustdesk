@@ -53,12 +53,14 @@ class _DesktopTabPageState extends State<DesktopTabPage> {
           key: const ValueKey(kTabLabelHomePage),
         )));
     if (bind.isIncomingOnly()) {
-      tabController.onSelected = (key) {
+      tabController.onSelected = (key) async {
         if (key == kTabLabelHomePage) {
-          windowManager.setSize(getIncomingOnlyHomeSize());
+          windowManager
+              .setSize(await waylandCompensatedSize(getIncomingOnlyHomeSize()));
           setResizable(false);
         } else {
-          windowManager.setSize(getIncomingOnlySettingsSize());
+          windowManager.setSize(
+              await waylandCompensatedSize(getIncomingOnlySettingsSize()));
           setResizable(true);
         }
       };
